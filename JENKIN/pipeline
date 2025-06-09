@@ -1,1 +1,47 @@
+pipeline {
+    agent any
+
+    environment {
+        PATCH_SCRIPT = 'scripts/windows_patch.ps1'
+        REPORT_FILE = 'samples/vulnerability_report.csv'
+    }
+
+    stages {
+        stage('Nhận báo cáo lỗ hổng') {
+            steps {
+                echo "Đã nhận file báo cáo: ${env.REPORT_FILE}"
+            }
+        }
+        stage('Parse CVE quan trọng') {
+            steps {
+                script {
+                    def vulnerabilities = readCSV file: env.REPORT_FILE
+                    def criticalCves = []
+                    for (row in vulnerabilities) {
+                        if (row.Severity == 'Critical' || row.Severity == 'High') {
+                            criticalCves << row
+                        }
+                    }
+                    currentBuild.description = "Có ${criticalCves.size()} CVE critical/high"
+                    writeJSON file: 'critical_cves.json', json: criticalCves
+                }
+            }
+        }
+        stage('Trigger Windows Patch') {
+            steps {
+                script {
+                    def criticalCves = readJSON file: 'critical_cves.json'
+                    for (row in criticalCves) {
+                        bat "powershell -ExecutionPolicy Bypass -File ${env.PATCH_SCRIPT} -CVE ${row.CVE} -Package ${row.Package}"
+                    }
+                }
+            }
+        }
+        stage('Log kết quả') {
+            steps {
+                echo "Hoàn thành patch, kiểm tra log tại workspace."
+            }
+        }
+    }
+}
 
