@@ -2,46 +2,68 @@ pipeline {
     agent any
 
     environment {
-        PATCH_SCRIPT = 'scripts/windows_patch.ps1'
         REPORT_FILE = 'samples/vulnerability_report.csv'
     }
 
     stages {
-        stage('Nhận báo cáo lỗ hổng') {
+        stage('1. Nhận báo cáo đầu vào') {
             steps {
-                echo "Đã nhận file báo cáo: ${env.REPORT_FILE}"
+                echo "Nhận file: ${env.REPORT_FILE}"
             }
         }
-        stage('Parse CVE quan trọng') {
+        stage('2. Nhận định định dạng') {
             steps {
                 script {
-                    def vulnerabilities = readCSV file: env.REPORT_FILE
-                    def criticalCves = []
-                    for (row in vulnerabilities) {
+                    // Kiểm tra định dạng file, chuyển sang CSV nếu cần
+                    echo "Kiểm tra định dạng file..."
+                }
+            }
+        }
+        stage('3. Lọc các CVE') {
+            steps {
+                script {
+                    def vulns = readCSV file: env.REPORT_FILE
+                    def filtered = []
+                    for (row in vulns) {
                         if (row.Severity == 'Critical' || row.Severity == 'High') {
-                            criticalCves << row
+                            filtered << row
                         }
                     }
-                    currentBuild.description = "Có ${criticalCves.size()} CVE critical/high"
-                    writeJSON file: 'critical_cves.json', json: criticalCves
+                    writeJSON file: 'filtered_cve.json', json: filtered
                 }
             }
         }
-        stage('Trigger Windows Patch') {
+        stage('3.1. (Tùy chọn) Scan lại hệ thống') {
+            when { expression { false } } // Bỏ qua mặc định, bật nếu cần
             steps {
-                script {
-                    def criticalCves = readJSON file: 'critical_cves.json'
-                    for (row in criticalCves) {
-                        bat "powershell -ExecutionPolicy Bypass -File ${env.PATCH_SCRIPT} -CVE ${row.CVE} -Package ${row.Package}"
-                    }
-                }
+                bat "powershell -ExecutionPolicy Bypass -File scripts/scan_vuln.ps1"
             }
         }
-        stage('Log kết quả') {
+        stage('4. Kiểm tra hệ thống chung') {
             steps {
-                echo "Hoàn thành patch, kiểm tra log tại workspace."
+                bat "powershell -ExecutionPolicy Bypass -File scripts/check_system.ps1"
+            }
+        }
+        stage('5. Tìm bản vá trên mạng') {
+            steps {
+                bat "powershell -ExecutionPolicy Bypass -File scripts/find_patch.ps1 filtered_cve.json"
+            }
+        }
+        stage('6. Vá') {
+            steps {
+                bat "powershell -ExecutionPolicy Bypass -File scripts/windows_patch.ps1 filtered_cve.json"
+            }
+        }
+        stage('6.1. Scan lại') {
+            steps {
+                bat "powershell -ExecutionPolicy Bypass -File scripts/scan_vuln.ps1"
+            }
+        }
+        stage('7. Báo cáo đầu ra') {
+            steps {
+                // Tổng hợp log, gửi email/slack, xuất file báo cáo
+                echo "Hoàn thành, kiểm tra báo cáo kết quả."
             }
         }
     }
 }
-
